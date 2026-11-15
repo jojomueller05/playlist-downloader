@@ -4,7 +4,7 @@
 Skips videos longer than 10 minutes.
 
 Setup:   pip install -U "yt-dlp[default]"   + ffmpeg + deno (see README)
-Usage:   python download_songs.py [songs.json] [-w 6]
+Usage:   python download_songs.py [songs.json] [-w 6] [--cookies-from-browser firefox] [--js-runtimes node]
 
 Failures are written to failed.log.
 """
@@ -25,6 +25,7 @@ OUT_DIR = "download"
 FAIL_LOG = "failed.log"
 
 print_lock = threading.Lock()
+YT_OPTS = {}  # filled from --cookies-from-browser / --cookies / --js-runtimes
 
 
 class QuietLogger:
@@ -90,6 +91,9 @@ def make_opts(has_ffmpeg):
         "match_filter": yt_dlp.utils.match_filter_func(f"duration <= {MAX_SECONDS}"),
         "concurrent_fragment_downloads": 4,
         "retries": 3,
+        "sleep_interval": 1,  # small pause before each download, looks less like a bot
+        "max_sleep_interval": 3,
+        **YT_OPTS,
     }
     if has_ffmpeg:
         # converts to m4a only if the stream isn't already AAC/m4a
@@ -101,7 +105,7 @@ def process(song, has_ffmpeg):
     title, author = song["title"], song["author"]
     try:
         # 1) fast flat search (no per-video extraction)
-        with yt_dlp.YoutubeDL({"logger": QuietLogger(), "extract_flat": True}) as ydl:
+        with yt_dlp.YoutubeDL({"logger": QuietLogger(), "extract_flat": True, **YT_OPTS}) as ydl:
             res = ydl.extract_info(f"ytsearch5:{title}", download=False)
         entries = res.get("entries", [])
         video, too_long = pick_video(entries, title, author)
@@ -127,7 +131,20 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("json_file", nargs="?", default="songs.json")
     ap.add_argument("-w", "--workers", type=int, default=6, help="parallel downloads")
+    ap.add_argument("--cookies-from-browser", metavar="BROWSER",
+                    help="use YouTube cookies from a browser (firefox, chrome, ...) to avoid bot checks")
+    ap.add_argument("--cookies", metavar="FILE", help="use a cookies.txt file instead")
+    ap.add_argument("--js-runtimes", metavar="RUNTIME", default=None,
+                    help="JavaScript runtime for YouTube challenges: deno (default), node, bun, quickjs")
     args = ap.parse_args()
+
+    if args.js_runtimes:
+        YT_OPTS["js_runtimes"] = {args.js_runtimes: {}}
+
+    if args.cookies_from_browser:
+        YT_OPTS["cookiesfrombrowser"] = (args.cookies_from_browser,)
+    if args.cookies:
+        YT_OPTS["cookiefile"] = args.cookies
 
     has_ffmpeg = shutil.which("ffmpeg") is not None
     if not has_ffmpeg:
