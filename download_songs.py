@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Download the songs from songs.json as .mp4 from YouTube (skips videos > 10 min).
+"""Download the audio of the songs in songs.json from YouTube as .mp4 (audio only).
 
-Setup:   pip install -U "yt-dlp[default]"   + ffmpeg + deno (see notes)
-Usage:   python download_songs.py [songs.json] [-w 6] [-q 720]
+Skips videos longer than 10 minutes.
+
+Setup:   pip install -U "yt-dlp[default]"   + ffmpeg + deno (see README)
+Usage:   python download_songs.py [songs.json] [-w 6]
 
 Failures are written to failed.log.
 """
@@ -53,6 +55,10 @@ def clean_error(e):
     return re.sub(r"^ERROR:\s*", "", msg)[:200]
 
 
+def find_file(video_id, ext):
+    return glob.glob(os.path.join(OUT_DIR, f"*[[]{video_id}[]].{ext}"))
+
+
 def pick_video(entries, title, author):
     """Best search hit <= 10 min by fuzzy title + channel match."""
     t, a = norm(title), norm(author)
@@ -74,27 +80,24 @@ def pick_video(entries, title, author):
     return best, too_long
 
 
-def build_format(has_ffmpeg, max_height):
-    h = f"[height<={max_height}]" if max_height else ""
-    if has_ffmpeg:
-        return f"bv*[ext=mp4]{h}+ba[ext=m4a]/bv*{h}+ba/b{h}/b"
-    return f"b[ext=mp4]{h}/b{h}/b"  # single-file only, no merging possible
-
-
-def make_opts(fmt):
-    return {
+def make_opts(has_ffmpeg):
+    opts = {
         "logger": QuietLogger(),
         "noprogress": True,
-        "format": fmt,
-        "merge_output_format": "mp4",
+        # prefer the native m4a (AAC) audio stream: no re-encoding, small and fast
+        "format": "ba[ext=m4a]/ba/b",
         "outtmpl": os.path.join(OUT_DIR, "%(title).150B [%(id)s].%(ext)s"),
         "match_filter": yt_dlp.utils.match_filter_func(f"duration <= {MAX_SECONDS}"),
         "concurrent_fragment_downloads": 4,
         "retries": 3,
     }
+    if has_ffmpeg:
+        # converts to m4a only if the stream isn't already AAC/m4a
+        opts["postprocessors"] = [{"key": "FFmpegExtractAudio", "preferredcodec": "m4a"}]
+    return opts
 
 
-def process(song, fmt):
+def process(song, has_ffmpeg):
     title, author = song["title"], song["author"]
     try:
         # 1) fast flat search (no per-video extraction)
@@ -105,17 +108,21 @@ def process(song, fmt):
         if not video:
             return title, author, "failed", f"no match <= 10 min ({too_long} of {len(entries)} results too long)"
 
-        found = os.path.join(OUT_DIR, f"*[[]{video['id']}[]].mp4")
-        if glob.glob(found):
-            return title, author, "exists", video["id"]
+        vid = video["id"]
+        if find_file(vid, "mp4"):
+            return title, author, "exists", vid
 
-        # 2) download
-        with yt_dlp.YoutubeDL(make_opts(fmt)) as ydl:
-            ydl.download([f"https://www.youtube.com/watch?v={video['id']}"])
+        # 2) download audio
+        with yt_dlp.YoutubeDL(make_opts(has_ffmpeg)) as ydl:
+            ydl.download([f"https://www.youtube.com/watch?v={vid}"])
 
-        if glob.glob(found):
-            return title, author, "ok", video["id"]
-        return title, author, "failed", "no mp4 produced (filtered or merge failed)"
+        # 3) m4a is an MPEG-4 container, so renaming it to .mp4 is lossless
+        for path in find_file(vid, "m4a"):
+            os.replace(path, path[:-4] + ".mp4")
+
+        if find_file(vid, "mp4"):
+            return title, author, "ok", vid
+        return title, author, "failed", "no audio file produced (filtered, or install ffmpeg)"
     except Exception as e:  # noqa: BLE001
         return title, author, "failed", clean_error(e)
 
@@ -124,15 +131,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("json_file", nargs="?", default="songs.json")
     ap.add_argument("-w", "--workers", type=int, default=6, help="parallel downloads")
-    ap.add_argument("-q", "--max-height", type=int, default=720,
-                    help="max video height, 0 = best available")
     args = ap.parse_args()
 
     has_ffmpeg = shutil.which("ffmpeg") is not None
     if not has_ffmpeg:
-        print("WARNING: ffmpeg not found. YouTube mostly serves video and audio separately, "
-              "so many downloads will fail. Install ffmpeg.\n")
-    fmt = build_format(has_ffmpeg, args.max_height)
+        print("WARNING: ffmpeg not found. Only videos with a native m4a audio stream "
+              "will work. Install ffmpeg for best results.\n")
 
     os.makedirs(OUT_DIR, exist_ok=True)
     open(FAIL_LOG, "w").close()
@@ -143,7 +147,7 @@ def main():
     counts = {"ok": 0, "exists": 0, "failed": 0}
     pool = ThreadPoolExecutor(max_workers=args.workers)
     try:
-        futures = [pool.submit(process, s, fmt) for s in songs]
+        futures = [pool.submit(process, s, has_ffmpeg) for s in songs]
         for i, fut in enumerate(as_completed(futures), 1):
             title, author, status, info = fut.result()
             counts[status] += 1

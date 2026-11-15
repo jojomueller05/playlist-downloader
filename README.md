@@ -3,7 +3,7 @@
 > [!CAUTION]
 > Completely vibe coded with Claude.
 
-Two small Python scripts that rebuild a playlist from the **Free Music Offline** Android app (`com.freemusic.offline.bus`) and download the songs from YouTube as `.mp4`.
+Two small Python scripts that rebuild a playlist from the **Free Music Offline** Android app (`com.freemusic.offline.bus`) and download the audio of the songs from YouTube as `.mp4` (audio only).
 
 The app keeps its playlists in a private database that can't be read without root, so `playlist_scraper.py` reads the song list straight from the screen with `adb` instead.
 
@@ -18,7 +18,7 @@ Phone (playlist open) --adb--> playlist_scraper.py --> songs.json --> download_s
 | `playlist_scraper.py` | Scrolls the playlist on the phone, dumps each screen, extracts title and author, writes `songs.json` |
 | `download_songs.py` | Reads `songs.json`, finds each video on YouTube, downloads it to `./download` |
 | `songs.json` | Generated. List of `{ "title": ..., "author": ... }` |
-| `download/` | Generated. The downloaded `.mp4` files |
+| `download/` | Generated. The downloaded audio files (`.mp4`) |
 | `failed.log` | Generated. Songs that couldn't be downloaded, with the reason |
 
 ## Requirements
@@ -28,7 +28,7 @@ Phone (playlist open) --adb--> playlist_scraper.py --> songs.json --> download_s
 - A phone with Developer options and **USB debugging** enabled
 - For downloading:
   - `yt-dlp`: `pip install -U "yt-dlp[default]"`
-  - `ffmpeg` (merges video and audio, which YouTube serves separately)
+  - `ffmpeg` (converts the audio if a video has no native m4a stream)
   - A JavaScript runtime such as [Deno](https://deno.com), which recent yt-dlp versions need to read YouTube formats
 
 ## Step 1: Scrape the playlist
@@ -65,16 +65,16 @@ python playlist_scraper.py ui1.xml ui2.xml          # parse existing dumps, no p
 python download_songs.py
 ```
 
-For each entry the script searches YouTube for the title, looks at the top 5 results, and picks the best match by fuzzy title plus channel name. Videos **longer than 10 minutes are never downloaded**. Downloads run in parallel and land in `./download` as `Title [videoid].mp4`.
+For each entry the script searches YouTube for the title, looks at the top 5 results, and picks the best match by fuzzy title plus channel name. Videos **longer than 10 minutes are never downloaded**. Only the **audio** is downloaded, as a small `.mp4` file (the native AAC/m4a stream, so there is no re-encoding and no video). Downloads run in parallel and land in `./download` as `Title [videoid].mp4`.
 
 **Options**
 
 ```
 python download_songs.py favorites.json   # use another JSON file
 python download_songs.py -w 8             # parallel downloads (default 6)
-python download_songs.py -q 480           # max video height (default 720, 0 = best)
 ```
 
+- If `./download` still contains full videos from an earlier run, delete them first, otherwise those songs are skipped as "already there".
 - Songs already in `./download` are detected by video ID and skipped, so you can re-run safely to retry failures or continue after Ctrl+C.
 - Failures are printed with a ✗ and written to `failed.log` as `title | author | reason`.
 - Going far above about 8 workers can get you rate-limited by YouTube.
