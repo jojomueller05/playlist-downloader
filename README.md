@@ -1,14 +1,11 @@
 # Playlist Downloader
 
-> [!CAUTION]
-> Completely vibe coded with Claude.
+Two small Python scripts that rebuild a playlist from an old Android music app (package name `com.freemusic.offline.bus`) and download the audio of the songs from YouTube as `.m4a` (audio only).
 
-Two small Python scripts that rebuild a playlist from the **Free Music Offline** Android app (`com.freemusic.offline.bus`) and download the audio of the songs from YouTube as `.mp4` (audio only).
-
-The app keeps its playlists in a private database that can't be read without root, so `playlist_scraper.py` reads the song list straight from the screen with `adb` instead.
+The app has no export function, and the playlist is probably stored in the app's private storage, which can't be read without root. So `playlist_scraper.py` reads the song list straight from the screen with `adb` instead.
 
 ```
-Phone (playlist open) --adb--> playlist_scraper.py --> songs.json --> download_songs.py --> ./download/*.mp4
+Phone (playlist open) --adb--> playlist_scraper.py --> songs.json --> download_songs.py --> ./download/*.m4a
 ```
 
 ## Files
@@ -18,7 +15,7 @@ Phone (playlist open) --adb--> playlist_scraper.py --> songs.json --> download_s
 | `playlist_scraper.py` | Scrolls the playlist on the phone, dumps each screen, extracts title and author, writes `songs.json` |
 | `download_songs.py` | Reads `songs.json`, finds each video on YouTube, downloads it to `./download` |
 | `songs.json` | Generated. List of `{ "title": ..., "author": ... }` |
-| `download/` | Generated. The downloaded audio files (`.mp4`) |
+| `download/` | Generated. The downloaded audio files (`.m4a`) |
 | `failed.log` | Generated. Songs that couldn't be downloaded, with the reason |
 
 ## Requirements
@@ -28,7 +25,7 @@ Phone (playlist open) --adb--> playlist_scraper.py --> songs.json --> download_s
 - A phone with Developer options and **USB debugging** enabled
 - For downloading:
   - `yt-dlp`: `pip install -U "yt-dlp[default]"`
-  - `ffmpeg` (converts the audio if a video has no native m4a stream)
+  - `ffmpeg` (converts the audio if a video has no native m4a stream; without it, only videos that already have an m4a stream work)
   - A JavaScript runtime such as [Deno](https://deno.com), which recent yt-dlp versions need to read YouTube formats
 
 ## Step 1: Scrape the playlist
@@ -65,7 +62,7 @@ python playlist_scraper.py ui1.xml ui2.xml          # parse existing dumps, no p
 python download_songs.py
 ```
 
-For each entry the script searches YouTube for the title, looks at the top 5 results, and picks the best match by fuzzy title plus channel name. Videos **longer than 10 minutes are never downloaded**. Only the **audio** is downloaded, as a small `.mp4` file (the native AAC/m4a stream, so there is no re-encoding and no video). Downloads run in parallel and land in `./download` as `Title [videoid].mp4`.
+For each entry the script searches YouTube for the title, looks at the top 5 results, and picks the best match by fuzzy title plus channel name. Videos **longer than 10 minutes are never downloaded**. Only the **audio** is downloaded, as a small `.m4a` file (YouTube's native AAC stream, so usually there is no re-encoding, and there is no video). Downloads run in parallel and land in `./download` as `Title [videoid].m4a`.
 
 **Options**
 
@@ -76,7 +73,7 @@ python download_songs.py -w 8             # parallel downloads (default 6)
 
 - If `./download` still contains full videos from an earlier run, delete them first, otherwise those songs are skipped as "already there".
 - Songs already in `./download` are detected by video ID and skipped, so you can re-run safely to retry failures or continue after Ctrl+C.
-- Failures are printed with a ✗ and written to `failed.log` as `title | author | reason`.
+- Failures are printed with a ✗ and written to `failed.log` as `title | author | reason`. The log is overwritten on every run, so it only shows the failures of the latest run.
 - Going far above about 8 workers can get you rate-limited by YouTube.
 
 ## Troubleshooting
@@ -92,5 +89,5 @@ python download_songs.py -w 8             # parallel downloads (default 6)
 ## Notes
 
 - Only download content you have the right to download.
-- The original plan was to copy the app's SQLite database, but `.persistence.db` only contains a `download_streams` table (download tracking), not the playlists, and the WAL/SHM files aren't readable over MTP or `adb` without root.
+- The original plan was to copy the app's SQLite database, but `.persistence.db` only contains a `download_streams` table (download tracking), not the playlists, and the WAL/SHM files couldn't be read over MTP (input/output error) or with `adb pull` (permission denied). Reading them would probably need root.
 - `parse_dump.py` and `scrape_playlist.py` from earlier are superseded by `playlist_scraper.py` and can be deleted.

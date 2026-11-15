@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download the audio of the songs in songs.json from YouTube as .mp4 (audio only).
+"""Download the audio of the songs in songs.json from YouTube as .m4a (audio only).
 
 Skips videos longer than 10 minutes.
 
@@ -109,18 +109,14 @@ def process(song, has_ffmpeg):
             return title, author, "failed", f"no match <= 10 min ({too_long} of {len(entries)} results too long)"
 
         vid = video["id"]
-        if find_file(vid, "mp4"):
+        if find_file(vid, "m4a"):
             return title, author, "exists", vid
 
-        # 2) download audio
+        # 2) download audio (saved as .m4a)
         with yt_dlp.YoutubeDL(make_opts(has_ffmpeg)) as ydl:
             ydl.download([f"https://www.youtube.com/watch?v={vid}"])
 
-        # 3) m4a is an MPEG-4 container, so renaming it to .mp4 is lossless
-        for path in find_file(vid, "m4a"):
-            os.replace(path, path[:-4] + ".mp4")
-
-        if find_file(vid, "mp4"):
+        if find_file(vid, "m4a"):
             return title, author, "ok", vid
         return title, author, "failed", "no audio file produced (filtered, or install ffmpeg)"
     except Exception as e:  # noqa: BLE001
